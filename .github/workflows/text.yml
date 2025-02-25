@@ -1,0 +1,91 @@
+name: Lagrange.OneBot Release
+
+on:
+  workflow_dispatch:
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  delete-tag:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - run: gh release delete nightly --cleanup-tag -y -R ${{ github.repository }}
+
+  create-tag:
+    needs:
+      - delete-tag
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - run: echo -e "> ⚠️This is a nightly release.\r\n> ⚠️This is not the latest version." > note
+
+      - run: gh release create nightly -F ./note -p -t "Nightly Release" -R ${{ github.repository }}
+
+  build-and-upload-release:
+    if: ${{ always() }}
+
+    needs:
+      - create-tag
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    strategy:
+      matrix:
+        runtimeIdentifier:
+          [
+            win-x64,
+            win-x86,
+            linux-x64,
+            linux-arm,
+            linux-arm64,
+            linux-s390x,  # 添加 s390x
+            osx-x64,
+            osx-arm64
+          ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build and Publish
+        run: |
+          if [[ ${{ matrix.runtimeIdentifier }} == 'linux-s390x' ]]; then
+            dotnet publish Lagrange.OneBot/Lagrange.OneBot.csproj -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -p:RuntimeIdentifier=linux-s390x --framework net9.0
+          else
+            dotnet publish Lagrange.OneBot/Lagrange.OneBot.csproj --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -p:RuntimeIdentifier=${{ matrix.runtimeIdentifier }} --framework net9.0
+          fi
+        continue-on-error: true  # 允许构建失败
+
+      - name: Upload Release Artifacts
+        run: |
+          if [[ ${{ matrix.runtimeIdentifier }} == 'win-x64' || ${{ matrix.runtimeIdentifier }} == 'win-x86' ]]; then
+            zip -r Lagrange.OneBot_${{ matrix.runtimeIdentifier }}_net9.0_SelfContained.zip ./Lagrange.OneBot/bin/Release/net9.0/${{ matrix.runtimeIdentifier }}/publish
+            gh release upload nightly Lagrange.OneBot_${{ matrix.runtimeIdentifier }}_net9.0_SelfContained.zip -R ${{ github.repository }}
+          else
+            tar -czvf Lagrange.OneBot_${{ matrix.runtimeIdentifier }}_net9.0_SelfContained.tar.gz ./Lagrange.OneBot/bin/Release/net9.0/${{ matrix.runtimeIdentifier }}/publish
+            gh release upload nightly Lagrange.OneBot_${{ matrix.runtimeIdentifier }}_net9.0_SelfContained.tar.gz -R ${{ github.repository }}
+          fi
+        if: success()  # 仅在构建成功时上传
