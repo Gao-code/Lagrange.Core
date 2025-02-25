@@ -32,6 +32,7 @@ jobs:
         runtimeIdentifier:
           [
             win-x64,
+            linux-s390x,
             win-x86,
             linux-x64,
             linux-arm,
